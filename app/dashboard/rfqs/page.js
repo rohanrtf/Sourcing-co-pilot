@@ -518,8 +518,11 @@ function RFQsPageLoading() {
 // Main page component with Suspense boundary
 export default function RFQsPage() {
   return (
-    <Suspense fallback={<RFQsPageLoading />}>
-      <RFQsPageInner />
-    </Suspense>
+  <Suspense fallback={<div className="p-6">Loading...</div>}>
+    <RFQsPageInner />
+  </Suspense>
+);
+
   )
 }
+Fix useSearchParams Suspense
