@@ -1,0 +1,305 @@
+// Prisma Schema for AI Sourcing Copilot
+// PostgreSQL + Supabase
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== COMPANY & USERS =====
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  gstin     String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  indents  Indent[]
+  vendors  Vendor[]
+  rfqs     RFQ[]
+
+  @@index([name])
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  EXECUTIVE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         UserRole @default(EXECUTIVE)
+  companyId    String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  indents   Indent[]   @relation("CreatedBy")
+  rfqs      RFQ[]      @relation("RFQCreatedBy")
+  decisions Decision[] @relation("ApprovedBy")
+
+  @@index([email])
+  @@index([companyId])
+}
+
+// ===== INDENT & LINE ITEMS =====
+
+enum IndentStatus {
+  DRAFT
+  PROCESSING
+  NORMALIZED
+  RFQ_SENT
+  QUOTES_RECEIVED
+  COMPARED
+  DECIDED
+  CLOSED
+}
+
+model Indent {
+  id              String       @id @default(uuid())
+  indentNumber    String
+  title           String
+  status          IndentStatus @default(DRAFT)
+  originalFileUrl String?
+  originalFileName String?
+  rawText         String?      @db.Text
+  companyId       String
+  createdById     String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  company   Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("CreatedBy", fields: [createdById], references: [id])
+  lines     IndentLine[]
+  rfqs      RFQ[]
+  decisions Decision[]
+
+  @@unique([companyId, indentNumber])
+  @@index([status])
+  @@index([companyId])
+}
+
+model IndentLine {
+  id              String   @id @default(uuid())
+  lineNumber      Int
+  rawDescription  String   @db.Text
+  quantity        Float
+  unit            String   @default("Nos")
+  remarks         String?
+  indentId        String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  indent         Indent          @relation(fields: [indentId], references: [id], onDelete: Cascade)
+  normalizedItem NormalizedItem?
+  quoteLines     QuoteLine[]
+  decisions      Decision[]
+
+  @@unique([indentId, lineNumber])
+  @@index([indentId])
+}
+
+// ===== NORMALIZED ITEMS =====
+
+model NormalizedItem {
+  id               String   @id @default(uuid())
+  indentLineId     String   @unique
+  category         String
+  cleanDescription String   @db.Text
+  attributes       Json     @default("{}")
+  confidence       Float    @default(0)
+  isManuallyEdited Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  indentLine IndentLine @relation(fields: [indentLineId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+}
+
+// ===== VENDORS =====
+
+model Vendor {
+  id                  String   @id @default(uuid())
+  name                String
+  email               String
+  phone               String?
+  location            String?
+  gstin               String?
+  categoriesSupported String[] @default([])
+  companyId           String
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rfqVendors RFQVendor[]
+  quotes     Quote[]
+
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@index([name])
+}
+
+// ===== RFQ =====
+
+enum RFQStatus {
+  DRAFT
+  SENT
+  PARTIAL_RESPONSE
+  ALL_RESPONDED
+  CLOSED
+}
+
+model RFQ {
+  id          String    @id @default(uuid())
+  rfqNumber   String
+  title       String
+  status      RFQStatus @default(DRAFT)
+  dueDate     DateTime?
+  notes       String?   @db.Text
+  indentId    String
+  companyId   String
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  indent    Indent      @relation(fields: [indentId], references: [id], onDelete: Cascade)
+  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User        @relation("RFQCreatedBy", fields: [createdById], references: [id])
+  vendors   RFQVendor[]
+
+  @@unique([companyId, rfqNumber])
+  @@index([status])
+  @@index([indentId])
+}
+
+enum RFQVendorStatus {
+  PENDING
+  SENT
+  VIEWED
+  RESPONDED
+  DECLINED
+}
+
+model RFQVendor {
+  id            String          @id @default(uuid())
+  rfqId         String
+  vendorId      String
+  status        RFQVendorStatus @default(PENDING)
+  emailSubject  String?
+  emailBody     String?         @db.Text
+  sentAt        DateTime?
+  respondedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  rfq    RFQ    @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  quotes Quote[]
+
+  @@unique([rfqId, vendorId])
+  @@index([rfqId])
+  @@index([vendorId])
+}
+
+// ===== QUOTES =====
+
+enum QuoteStatus {
+  DRAFT
+  UPLOADED
+  PARSED
+  MATCHED
+  REJECTED
+}
+
+model Quote {
+  id              String      @id @default(uuid())
+  quoteNumber     String?
+  status          QuoteStatus @default(DRAFT)
+  originalFileUrl String?
+  originalFileName String?
+  rawText         String?     @db.Text
+  validUntil      DateTime?
+  vendorId        String
+  rfqVendorId     String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  vendor    Vendor      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  rfqVendor RFQVendor   @relation(fields: [rfqVendorId], references: [id], onDelete: Cascade)
+  lines     QuoteLine[]
+
+  @@index([vendorId])
+  @@index([rfqVendorId])
+}
+
+model QuoteLine {
+  id            String   @id @default(uuid())
+  lineNumber    Int
+  description   String   @db.Text
+  quantity      Float
+  unit          String   @default("Nos")
+  unitPrice     Float
+  gstPercent    Float    @default(18)
+  freight       Float    @default(0)
+  leadTimeDays  Int?
+  paymentTerms  String?
+  brand         String?
+  origin        String?
+  landedCost    Float    @default(0)
+  matchScore    Float    @default(0)
+  quoteId       String
+  indentLineId  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  quote      Quote       @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  indentLine IndentLine? @relation(fields: [indentLineId], references: [id])
+  decisions  Decision[]
+
+  @@index([quoteId])
+  @@index([indentLineId])
+}
+
+// ===== DECISIONS =====
+
+enum DecisionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Decision {
+  id             String         @id @default(uuid())
+  status         DecisionStatus @default(PENDING)
+  reason         String?
+  indentId       String
+  indentLineId   String
+  selectedQuoteLineId String?
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  indent         Indent      @relation(fields: [indentId], references: [id], onDelete: Cascade)
+  indentLine     IndentLine  @relation(fields: [indentLineId], references: [id], onDelete: Cascade)
+  selectedQuoteLine QuoteLine? @relation(fields: [selectedQuoteLineId], references: [id])
+  approvedBy     User?       @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@unique([indentId, indentLineId])
+  @@index([indentId])
+  @@index([status])
+}
